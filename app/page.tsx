@@ -1,65 +1,58 @@
-import Image from "next/image";
+import { Sidebar } from '@/components/shell/Sidebar';
+import { TopBar } from '@/components/shell/TopBar';
+import { AIPanel } from '@/components/shell/AIPanel';
+import { CommandPalette } from '@/components/shell/CommandPalette';
+import { KeyboardNav, GlobalToast } from '@/components/shell/KeyboardNav';
+import { TweaksPanel } from '@/components/shell/TweaksPanel';
+import { ShellWrapper } from '@/components/shell/ShellWrapper';
+import { AppContent } from '@/components/shell/AppContent';
+import { ErrorBoundaryWrapper } from '@/components/shell/ErrorBoundaryWrapper';
+import { NotificationSeeder } from '@/components/shell/NotificationSeeder';
+import { StoreInitializer } from '@/components/shell/StoreInitializer';
+import { getTasksWithStats } from '@/lib/actions/tasks';
+import { getJobs } from '@/lib/actions/jobs';
+import { getOpportunities } from '@/lib/actions/opportunities';
+import { auth } from '@/lib/auth';
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+
+  const [taskData, jobs, opportunities] = await Promise.all([
+    getTasksWithStats().catch(() => null),
+    getJobs().catch(() => []),
+    getOpportunities().catch(() => []),
+  ]);
+
+  const user = session?.user ? {
+    name: session.user.name ?? null,
+    email: session.user.email ?? null,
+    image: session.user.image ?? null,
+  } : null;
+
+  // Flat task list for badge seeding (StoreInitializer only needs Task[], not TaskWithProject[])
+  const allTasks = taskData?.tasks ?? [];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <>
+      <KeyboardNav />
+      {/* Seed badge counts into the store from fresh SSR data */}
+      <StoreInitializer tasks={allTasks} jobs={jobs} opportunities={opportunities} />
+      <ShellWrapper>
+        <Sidebar user={user} jobs={jobs} />
+        <main className="main">
+          <TopBar />
+          <div className="main-scroll">
+            <ErrorBoundaryWrapper>
+              <AppContent taskData={taskData} jobs={jobs} opportunities={opportunities} />
+            </ErrorBoundaryWrapper>
+          </div>
+        </main>
+        <AIPanel />
+      </ShellWrapper>
+      <CommandPalette />
+      <TweaksPanel />
+      <NotificationSeeder />
+      <GlobalToast />
+    </>
   );
 }
