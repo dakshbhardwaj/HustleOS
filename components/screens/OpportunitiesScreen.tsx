@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useTransition, useCallback } from 'react';
-import { Plus, ExternalLink, Loader2, Trash2, Pencil, X, Sparkles, RefreshCw } from 'lucide-react';
+import { Plus, ExternalLink, Loader2, Trash2, Pencil, X, Sparkles, RefreshCw, CheckSquare } from 'lucide-react';
 import { ScreenHeader, Pill, EmptyState } from '@/components/ui';
 import { getOpportunities, createOpportunity, updateOpportunityState, updateOpportunity, deleteOpportunity } from '@/lib/actions/opportunities';
+import { createTaskFromOpportunity } from '@/lib/actions/tasks';
+import { useAppStore } from '@/lib/store';
 import type { Opportunity } from '@prisma/client';
 
 const STATES = ['New', 'Interested', 'Applied', 'Won', 'Passed'];
@@ -46,6 +48,9 @@ interface EditForm {
 }
 
 export function OpportunitiesScreen() {
+  const showToast = useAppStore((s) => s.showToast);
+  const selectedEntity = useAppStore((s) => s.selectedEntity);
+  const setSelectedEntity = useAppStore((s) => s.setSelectedEntity);
   const [opps, setOpps] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -65,6 +70,16 @@ export function OpportunitiesScreen() {
   useEffect(() => {
     getOpportunities().then(setOpps).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (selectedEntity?.type !== 'opportunity') return;
+    const timer = setTimeout(() => {
+      setStateFilter(null);
+      setExpandedId(selectedEntity.id);
+      setSelectedEntity(null);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [selectedEntity, setSelectedEntity]);
 
   const handleSync = useCallback(async () => {
     setSyncing(true);
@@ -182,6 +197,17 @@ export function OpportunitiesScreen() {
   const handleDelete = (id: string) => {
     setOpps((prev) => prev.filter((o) => o.id !== id));
     startSave(async () => { await deleteOpportunity(id); });
+  };
+
+  const handleCreateTask = (opp: Opportunity) => {
+    startSave(async () => {
+      try {
+        const task = await createTaskFromOpportunity(opp.id);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create opportunity task', 'info');
+      }
+    });
   };
 
   if (loading) {
@@ -327,7 +353,15 @@ export function OpportunitiesScreen() {
           {filtered.map((opp) => {
             const expanded = expandedId === opp.id;
             return (
-              <div key={opp.id} className="opp-card" style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expanded ? null : opp.id)}>
+              <div
+                key={opp.id}
+                className="opp-card"
+                style={{
+                  cursor: 'pointer',
+                  outline: expanded ? '1px solid color-mix(in oklch, var(--accent) 45%, transparent)' : undefined,
+                }}
+                onClick={() => setExpandedId(expanded ? null : opp.id)}
+              >
                 <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
                   {opp.score > 0 && <ScoreRing score={opp.score} />}
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -370,6 +404,14 @@ export function OpportunitiesScreen() {
                         title="Edit"
                       >
                         <Pencil size={11} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: 10, padding: '1px 5px', color: 'var(--accent)' }}
+                        onClick={(e) => { e.stopPropagation(); handleCreateTask(opp); }}
+                        title="Create task"
+                      >
+                        <CheckSquare size={11} />
                       </button>
                       <button
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', padding: 2 }}

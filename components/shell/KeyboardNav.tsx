@@ -3,7 +3,8 @@
 import { useEffect, useState, useTransition, useRef } from 'react';
 import { NAV } from '@/lib/nav';
 import { useAppStore, ACCENTS } from '@/lib/store';
-import { createTask, getProjects } from '@/lib/actions/tasks';
+import { createTaskFromCapture, getProjects } from '@/lib/actions/tasks';
+import { formatTaskDueLabel, parseTaskCapture } from '@/lib/task-capture';
 import type { ScreenKey } from '@/types';
 import type { Project } from '@prisma/client';
 
@@ -23,6 +24,7 @@ function QuickTaskModal({ onClose }: { onClose: () => void }) {
   const [saving, startSave] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
   const showToast = useAppStore((s) => s.showToast);
+  const parsed = parseTaskCapture(title);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -33,9 +35,13 @@ function QuickTaskModal({ onClose }: { onClose: () => void }) {
     if (!title.trim()) return;
     const t = title.trim();
     startSave(async () => {
-      await createTask({ title: t, priority, projectId: projectId || undefined });
-      showToast(`Task added: ${t.slice(0, 40)}${t.length > 40 ? '…' : ''}`);
-      onClose();
+      try {
+        const task = await createTaskFromCapture(t, { fallbackPriority: priority, projectId: projectId || undefined });
+        showToast(`Task added: ${task.title.slice(0, 40)}${task.title.length > 40 ? '…' : ''}`);
+        onClose();
+      } catch {
+        showToast('Could not add task', 'info');
+      }
     });
   };
 
@@ -64,6 +70,12 @@ function QuickTaskModal({ onClose }: { onClose: () => void }) {
           placeholder="What needs to get done?"
           style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
         />
+        {(parsed.priority || parsed.dueAt) && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', minHeight: 18 }}>
+            {parsed.priority && <span style={{ fontSize: 10.5, color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>{parsed.priority}</span>}
+            {parsed.dueAt && <span style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>due {formatTaskDueLabel(parsed.dueAt)}</span>}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: 5 }}>
             {(['P0', 'P1', 'P2'] as const).map((p) => (

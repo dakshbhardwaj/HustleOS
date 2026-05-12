@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { RefreshCw, Sparkles, CheckSquare, Briefcase, Zap, Loader2, Rss, ExternalLink, MessageSquare } from 'lucide-react';
+import { useState, useEffect, useRef, useTransition } from 'react';
+import { RefreshCw, Sparkles, CheckSquare, Briefcase, Zap, Loader2, Rss, MessageSquare } from 'lucide-react';
 import { ScreenHeader, Pill } from '@/components/ui';
-import { getTasksWithStats } from '@/lib/actions/tasks';
+import { createTaskFromJobNextStep, createTaskFromOpportunity, getTasksWithStats } from '@/lib/actions/tasks';
 import { getJobs } from '@/lib/actions/jobs';
 import { getOpportunities } from '@/lib/actions/opportunities';
 import { useAppStore } from '@/lib/store';
@@ -55,6 +55,7 @@ interface BriefData {
 export function DailyBriefScreen() {
   const dailyBriefCache    = useAppStore((s) => s.dailyBriefCache);
   const setDailyBriefCache = useAppStore((s) => s.setDailyBriefCache);
+  const showToast          = useAppStore((s) => s.showToast);
 
   const [data, setData] = useState<BriefData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,6 +67,7 @@ export function DailyBriefScreen() {
   });
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
+  const [, startTransition] = useTransition();
   const autoGenFired = useRef(false);
 
   const loadData = async () => {
@@ -120,7 +122,13 @@ export function DailyBriefScreen() {
   };
 
   // Load data on mount
-  useEffect(() => { loadData(); loadTechFeed(); }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadData();
+      loadTechFeed();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Auto-generate brief once per day (after data is ready)
   useEffect(() => {
@@ -128,11 +136,34 @@ export function DailyBriefScreen() {
     if (autoGenFired.current) return;                          // only once per mount
     if (dailyBriefCache?.date === todayDateString()) return;   // already cached today
     autoGenFired.current = true;
-    generateAISummary();
+    const timer = setTimeout(() => generateAISummary(), 0);
+    return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const createJobTask = (job: Job) => {
+    startTransition(async () => {
+      try {
+        const task = await createTaskFromJobNextStep(job.id);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create job task', 'info');
+      }
+    });
+  };
+
+  const createOpportunityTask = (opp: Opportunity) => {
+    startTransition(async () => {
+      try {
+        const task = await createTaskFromOpportunity(opp.id);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create opportunity task', 'info');
+      }
+    });
+  };
 
   return (
     <div className="screen">
@@ -174,11 +205,59 @@ export function DailyBriefScreen() {
       ) : data && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
 
+          {/* Action plan */}
+          <div style={{ background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 10, gridColumn: '1 / -1' }}>
+            <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Sparkles size={13} style={{ color: 'var(--accent)' }} />
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Today&apos;s action plan</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                {data.openTasks.length} open · {data.activeJobs.length} jobs · {data.opportunities.length} opportunities
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0 }}>
+              <div style={{ padding: 14, borderRight: '1px solid var(--border-soft)' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>1. Start</div>
+                <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.45, fontWeight: 600 }}>
+                  {(data.todayTasks[0] ?? data.openTasks.find((t) => t.priority === 'P0') ?? data.openTasks[0])?.title ?? 'Capture one clear task for today'}
+                </div>
+              </div>
+              <div style={{ padding: 14, borderRight: '1px solid var(--border-soft)' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>2. Follow up</div>
+                {data.activeJobs.find((j) => j.nextStep) ? (() => {
+                  const job = data.activeJobs.find((j) => j.nextStep)!;
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.45, fontWeight: 600 }}>{job.nextStep}</div>
+                      <button className="btn btn-ghost btn-sm" style={{ gap: 5, alignSelf: 'flex-start' }} onClick={() => createJobTask(job)}>
+                        <CheckSquare size={11} /> Make task
+                      </button>
+                    </div>
+                  );
+                })() : (
+                  <div style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.45 }}>Add next steps to active applications.</div>
+                )}
+              </div>
+              <div style={{ padding: 14 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>3. Bet</div>
+                {data.opportunities[0] ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.45, fontWeight: 600 }}>{data.opportunities[0].title}</div>
+                    <button className="btn btn-ghost btn-sm" style={{ gap: 5, alignSelf: 'flex-start' }} onClick={() => createOpportunityTask(data.opportunities[0])}>
+                      <CheckSquare size={11} /> Make task
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.45 }}>Track one promising opportunity.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Today's tasks */}
           <div style={{ background: 'var(--panel)', border: '1px solid var(--border-soft)', borderRadius: 10 }}>
             <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <CheckSquare size={13} style={{ color: 'var(--accent)' }} />
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Today's focus</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Today&apos;s focus</span>
               <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{data.todayTasks.length} tasks</span>
             </div>
             {data.todayTasks.length === 0 ? (

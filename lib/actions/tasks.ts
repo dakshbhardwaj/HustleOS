@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
+import { parseTaskCapture } from '@/lib/task-capture';
 import type { Priority, TaskStatus } from '@prisma/client';
 
 const USER_EMAIL = process.env.ALLOWED_EMAIL!;
@@ -77,12 +78,56 @@ export async function createTask(data: {
   aiSuggested?: boolean;
 }) {
   const user = await getUser();
+  const title = data.title.trim();
+  if (!title) throw new Error('Task title is required');
   const task = await prisma.task.create({
-    data: { ...data, userId: user.id },
+    data: { ...data, title, userId: user.id },
     include: TASK_INCLUDE,
   });
   revalidatePath('/');
   return task;
+}
+
+export async function createTaskFromCapture(input: string, options?: {
+  projectId?: string;
+  fallbackPriority?: Priority;
+  source?: string;
+}) {
+  const parsed = parseTaskCapture(input);
+  if (!parsed.title) throw new Error('Task title is required');
+  return createTask({
+    title: parsed.title,
+    subtitle: options?.source,
+    priority: parsed.priority ?? options?.fallbackPriority ?? 'P1',
+    dueAt: parsed.dueAt,
+    projectId: options?.projectId,
+  });
+}
+
+export async function createTaskFromJobNextStep(jobId: string) {
+  const user = await getUser();
+  const job = await prisma.job.findFirst({ where: { id: jobId, userId: user.id } });
+  if (!job) throw new Error('Job not found');
+  const title = job.nextStep?.trim() || `Follow up on ${job.company} ${job.role}`;
+  return createTask({
+    title,
+    subtitle: `${job.company} · ${job.role}`,
+    priority: job.stage === 'Interview' || job.stage === 'Offer' ? 'P0' : 'P1',
+    dueAt: undefined,
+  });
+}
+
+export async function createTaskFromOpportunity(opportunityId: string) {
+  const user = await getUser();
+  const opportunity = await prisma.opportunity.findFirst({ where: { id: opportunityId, userId: user.id } });
+  if (!opportunity) throw new Error('Opportunity not found');
+  return createTask({
+    title: `Work on ${opportunity.title}`,
+    subtitle: `${opportunity.source}${opportunity.reward ? ` · ${opportunity.reward}` : ''}`,
+    description: opportunity.desc ?? undefined,
+    priority: opportunity.score >= 85 ? 'P0' : opportunity.score >= 70 ? 'P1' : 'P2',
+    dueAt: opportunity.dueAt ?? undefined,
+  });
 }
 
 export async function createSubtask(parentId: string, data: {

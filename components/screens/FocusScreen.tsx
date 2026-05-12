@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Pause, RotateCcw, SkipForward, CheckCircle2, Coffee, Zap } from 'lucide-react';
 import { ScreenHeader } from '@/components/ui';
-import { getTasksWithStats, toggleTask } from '@/lib/actions/tasks';
+import { getTasksWithStats, toggleTask, updateTask } from '@/lib/actions/tasks';
 import { useAppStore } from '@/lib/store';
 
 /** Play a gentle two-tone chime using the Web Audio API — no file needed */
@@ -41,33 +41,6 @@ interface FocusTask { id: string; title: string; project: string; done: boolean;
 interface SessionLog { mode: TimerMode; completedAt: string; minutes: number; }
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
-
-function CircularTimer({ progress, mode, state }: { progress: number; mode: TimerMode; state: SessionState }) {
-  const r = 80;
-  const circ = 2 * Math.PI * r;
-  const fill = progress * circ;
-  const color = mode === 'focus' ? 'var(--accent)' : 'var(--success)';
-  return (
-    <div style={{ position: 'relative', width: 200, height: 200 }}>
-      <svg width={200} height={200} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={100} cy={100} r={r} fill="none" stroke="var(--border-soft)" strokeWidth={6} />
-        <circle
-          cx={100} cy={100} r={r} fill="none" stroke={color} strokeWidth={6}
-          strokeDasharray={`${fill} ${circ}`} strokeLinecap="round"
-          style={{ transition: state === 'running' ? 'stroke-dasharray 1s linear' : 'none' }}
-        />
-      </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-        <span style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', letterSpacing: 2, textTransform: 'uppercase' }}>
-          {MODE_LABEL[mode]}
-        </span>
-        <span style={{ fontSize: 36, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text)', letterSpacing: -1 }}>
-          {/* rendered by parent */}
-        </span>
-      </div>
-    </div>
-  );
-}
 
 export function FocusScreen() {
   const addFocusMinutes = useAppStore((s) => s.addFocusMinutes);
@@ -128,7 +101,7 @@ export function FocusScreen() {
       }
       return prev - 1;
     });
-  }, [mode, stop]);
+  }, [addFocusMinutes, mode, stop]);
 
   const start = () => {
     setState('running');
@@ -243,7 +216,9 @@ export function FocusScreen() {
                 if (!activeTask) return null;
                 return (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Finish "{activeTask.title.slice(0, 28)}{activeTask.title.length > 28 ? '…' : ''}"?</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                      Finish &quot;{activeTask.title.slice(0, 28)}{activeTask.title.length > 28 ? '…' : ''}&quot;?
+                    </span>
                     <button
                       className="btn btn-ghost btn-sm"
                       style={{ gap: 4, color: 'var(--success)', borderColor: 'var(--success)', fontSize: 11 }}
@@ -400,6 +375,21 @@ export function FocusScreen() {
               <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Tasks done</span>
               <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text)' }}>{tasks.filter((t) => t.done).length}/{tasks.length}</span>
             </div>
+            )}
+            {activeTaskId && (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ justifyContent: 'center', color: 'var(--warn)', borderColor: 'color-mix(in oklch, var(--warn) 45%, transparent)' }}
+                onClick={() => {
+                  const id = activeTaskId;
+                  setTasks((prev) => prev.filter((t) => t.id !== id));
+                  const next = tasks.find((t) => t.id !== id && !t.done);
+                  setActiveTaskId(next?.id ?? null);
+                  updateTask(id, { status: 'Blocked' });
+                }}
+              >
+                Mark active task blocked
+              </button>
             )}
           </div>
         </div>

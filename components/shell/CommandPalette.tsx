@@ -1,15 +1,36 @@
 'use client';
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useTransition } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { NAV } from '@/lib/nav';
 import { useAppStore } from '@/lib/store';
+import { getJobs } from '@/lib/actions/jobs';
+import { getNotes } from '@/lib/actions/notes';
+import { getOpportunities } from '@/lib/actions/opportunities';
+import {
+  createTaskFromCapture,
+  createTaskFromJobNextStep,
+  createTaskFromOpportunity,
+  getTasksWithStats,
+  toggleTask,
+} from '@/lib/actions/tasks';
 import type { ScreenKey } from '@/types';
+import type { Job, Note, Opportunity, Project, Task } from '@prisma/client';
+
+type TaskWithProject = Task & { project: Project | null; subtasks: Task[] };
+
+interface WorkspaceData {
+  tasks: TaskWithProject[];
+  jobs: Job[];
+  opportunities: Opportunity[];
+  notes: Note[];
+}
 
 interface CmdItem {
   k: string;
-  type: 'Jump' | 'AI' | 'Action';
+  type: 'Jump' | 'AI' | 'Action' | 'Task' | 'Job' | 'Opp' | 'Note';
   label: string;
+  detail?: string;
   action: () => void;
 }
 
@@ -19,12 +40,23 @@ export function CommandPalette() {
   const setActive        = useAppStore((s) => s.setActive);
   const setAiOpen        = useAppStore((s) => s.setAiOpen);
   const setAiPendingPrompt = useAppStore((s) => s.setAiPendingPrompt);
+  const setSelectedEntity = useAppStore((s) => s.setSelectedEntity);
+  const showToast        = useAppStore((s) => s.showToast);
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
+  const [workspace, setWorkspace] = useState<WorkspaceData>({ tasks: [], jobs: [], opportunities: [], notes: [] });
+  const [loadingWorkspace, setLoadingWorkspace] = useState(false);
+  const [, startTransition] = useTransition();
 
   const jump = (key: ScreenKey) => {
     setActive(key);
+    setCmdOpen(false);
+  };
+
+  const openEntity = (screen: ScreenKey, entity: Parameters<typeof setSelectedEntity>[0]) => {
+    setSelectedEntity(entity);
+    setActive(screen);
     setCmdOpen(false);
   };
 
@@ -32,6 +64,58 @@ export function CommandPalette() {
     setAiPendingPrompt(prompt);
     setAiOpen(true);
     setCmdOpen(false);
+  };
+
+  const createCapturedTask = (input: string) => {
+    setCmdOpen(false);
+    startTransition(async () => {
+      try {
+        const task = await createTaskFromCapture(input);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not add task', 'info');
+      }
+    });
+  };
+
+  const completeTask = (task: TaskWithProject) => {
+    setCmdOpen(false);
+    startTransition(async () => {
+      try {
+        await toggleTask(task.id);
+        setWorkspace((prev) => ({
+          ...prev,
+          tasks: prev.tasks.map((t) => t.id === task.id ? { ...t, done: !t.done, status: !t.done ? 'Completed' : 'Todo' } : t),
+        }));
+        showToast(`${task.done ? 'Reopened' : 'Completed'}: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not update task', 'info');
+      }
+    });
+  };
+
+  const createJobTask = (job: Job) => {
+    setCmdOpen(false);
+    startTransition(async () => {
+      try {
+        const task = await createTaskFromJobNextStep(job.id);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create job task', 'info');
+      }
+    });
+  };
+
+  const createOpportunityTask = (opportunity: Opportunity) => {
+    setCmdOpen(false);
+    startTransition(async () => {
+      try {
+        const task = await createTaskFromOpportunity(opportunity.id);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create opportunity task', 'info');
+      }
+    });
   };
 
   const items = useMemo<CmdItem[]>(() => {
@@ -55,27 +139,136 @@ export function CommandPalette() {
 
     const f = trimmed.toLowerCase();
     const matched = base.filter((i) => i.label.toLowerCase().includes(f));
+    const hay = (...parts: Array<string | null | undefined>) => parts.join(' ').toLowerCase();
 
-    // Always prepend an "Ask AI" item when the user has typed something
+    const taskMatches: CmdItem[] = workspace.tasks
+      .filter((task) => hay(task.title, task.subtitle, task.description, task.project?.name, task.priority, task.status).includes(f))
+      .slice(0, 4)
+      .flatMap((task) => [
+        {
+          k: `task-open-${task.id}`,
+          type: 'Task' as const,
+          label: task.title,
+          detail: `${task.done ? 'Done' : task.status} · ${task.priority}${task.project ? ` · ${task.project.name}` : ''}`,
+          action: () => openEntity('tasks', { type: 'task', id: task.id }),
+        },
+        {
+          k: `task-toggle-${task.id}`,
+          type: 'Action' as const,
+          label: `${task.done ? 'Reopen' : 'Complete'} task: ${task.title}`,
+          detail: task.project?.name ?? undefined,
+          action: () => completeTask(task),
+        },
+      ]);
+
+    const jobMatches: CmdItem[] = workspace.jobs
+      .filter((job) => hay(job.company, job.role, job.stage, job.nextStep, job.notes, job.location).includes(f))
+      .slice(0, 4)
+      .flatMap((job) => [
+        {
+          k: `job-open-${job.id}`,
+          type: 'Job' as const,
+          label: `${job.company} · ${job.role}`,
+          detail: `${job.stage}${job.nextStep ? ` · ${job.nextStep}` : ''}`,
+          action: () => openEntity('jobs', { type: 'job', id: job.id }),
+        },
+        {
+          k: `job-task-${job.id}`,
+          type: 'Action' as const,
+          label: `Create follow-up task for ${job.company}`,
+          detail: job.nextStep ?? job.role,
+          action: () => createJobTask(job),
+        },
+      ]);
+
+    const opportunityMatches: CmdItem[] = workspace.opportunities
+      .filter((opportunity) => hay(opportunity.title, opportunity.source, opportunity.desc, opportunity.reward, opportunity.state, opportunity.tags.join(' ')).includes(f))
+      .slice(0, 4)
+      .flatMap((opportunity) => [
+        {
+          k: `opp-open-${opportunity.id}`,
+          type: 'Opp' as const,
+          label: opportunity.title,
+          detail: `${opportunity.source} · ${opportunity.state}${opportunity.score ? ` · ${opportunity.score}` : ''}`,
+          action: () => openEntity('opportunities', { type: 'opportunity', id: opportunity.id }),
+        },
+        {
+          k: `opp-task-${opportunity.id}`,
+          type: 'Action' as const,
+          label: `Create task from opportunity: ${opportunity.title}`,
+          detail: opportunity.reward ?? opportunity.source,
+          action: () => createOpportunityTask(opportunity),
+        },
+      ]);
+
+    const noteMatches: CmdItem[] = workspace.notes
+      .filter((note) => hay(note.title, note.content, note.tags.join(' ')).includes(f))
+      .slice(0, 3)
+      .map((note) => ({
+        k: `note-open-${note.id}`,
+        type: 'Note' as const,
+        label: note.title,
+        detail: note.tags.length ? note.tags.join(', ') : note.content.slice(0, 80),
+        action: () => openEntity('vault', { type: 'note', id: note.id }),
+      }));
+
+    // Always prepend direct capture + "Ask AI" items when the user has typed something
+    const taskItem: CmdItem = {
+      k: 'create-task',
+      type: 'Action',
+      label: `Create task: "${trimmed}"`,
+      action: () => createCapturedTask(trimmed),
+    };
     const askItem: CmdItem = {
       k: 'ask-ai',
       type: 'AI',
       label: `Ask AI: "${trimmed}"`,
       action: () => askAI(trimmed),
     };
-    return [askItem, ...matched];
+    return [taskItem, askItem, ...taskMatches, ...jobMatches, ...opportunityMatches, ...noteMatches, ...matched].slice(0, 18);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, workspace]);
 
   useEffect(() => {
     if (cmdOpen) {
-      setQ('');
-      setCursor(0);
-      setTimeout(() => inputRef.current?.focus(), 30);
+      const timer = setTimeout(() => {
+        setQ('');
+        setCursor(0);
+        inputRef.current?.focus();
+      }, 30);
+      return () => clearTimeout(timer);
     }
   }, [cmdOpen]);
 
-  useEffect(() => { setCursor(0); }, [q]);
+  useEffect(() => {
+    if (!cmdOpen) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLoadingWorkspace(true);
+      Promise.all([
+        getTasksWithStats().catch(() => null),
+        getJobs().catch(() => []),
+        getOpportunities().catch(() => []),
+        getNotes().catch(() => []),
+      ]).then(([taskData, jobs, opportunities, notes]) => {
+        if (cancelled) return;
+        setWorkspace({
+          tasks: taskData?.tasks ?? [],
+          jobs,
+          opportunities,
+          notes,
+        });
+      }).finally(() => {
+        if (!cancelled) setLoadingWorkspace(false);
+      });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [cmdOpen]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setCursor(0), 0);
+    return () => clearTimeout(timer);
+  }, [q]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { setCmdOpen(false); return; }
@@ -113,9 +306,9 @@ export function CommandPalette() {
                   <span className={`cmd-type${it.type === 'AI' ? ' ai' : ''}`}>
                     {it.type === 'AI' ? '✦' : it.type[0]}
                   </span>
-                  <span>{it.label}</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
-                    {it.type}
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
+                    {it.detail ?? it.type}
                   </span>
                 </li>
               ))}
@@ -127,7 +320,7 @@ export function CommandPalette() {
               <span><kbd>↵</kbd> select</span>
               <span><kbd>↑↓</kbd> nav</span>
               <span><kbd>esc</kbd> close</span>
-              <span style={{ marginLeft: 'auto' }}>✦ AI ready</span>
+              <span style={{ marginLeft: 'auto' }}>{loadingWorkspace ? 'Indexing…' : '✦ Workspace ready'}</span>
             </footer>
           </Dialog.Content>
         </Dialog.Overlay>

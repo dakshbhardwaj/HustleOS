@@ -47,6 +47,7 @@ export function TaskDetailPanel({ taskId, onClose, onTaskUpdated, onTaskDeleted 
   const [savingDesc, setSavingDesc] = useState(false);
   const [newSubtitle, setNewSubtitle] = useState('');
   const [addingSubtask, setAddingSubtask] = useState(false);
+  const [generatingSubtasks, setGeneratingSubtasks] = useState(false);
   const [, startTransition] = useTransition();
 
   // Learnings
@@ -115,20 +116,22 @@ export function TaskDetailPanel({ taskId, onClose, onTaskUpdated, onTaskDeleted 
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    Promise.all([
-      getTaskDetail(taskId),
-      getNotesForTask(taskId),
-    ]).then(([t, notes]) => {
-      if (cancelled) return;
-      if (t) {
-        setTask(t as TaskDetail);
-        setDescDraft(t.description ?? '');
-      }
-      setLearnings(notes);
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => {
+      setLoading(true);
+      Promise.all([
+        getTaskDetail(taskId),
+        getNotesForTask(taskId),
+      ]).then(([t, notes]) => {
+        if (cancelled) return;
+        if (t) {
+          setTask(t as TaskDetail);
+          setDescDraft(t.description ?? '');
+        }
+        setLearnings(notes);
+        setLoading(false);
+      });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [taskId]);
 
   useEffect(() => {
@@ -171,6 +174,37 @@ export function TaskDetailPanel({ taskId, onClose, onTaskUpdated, onTaskDeleted 
     setTask((t) => t ? { ...t, subtasks: [...t.subtasks, sub as SubtaskRow] } : t);
     setNewSubtitle('');
     setAddingSubtask(false);
+  };
+
+  const handleGenerateSubtasks = async () => {
+    if (!task || generatingSubtasks) return;
+    setGeneratingSubtasks(true);
+    try {
+      const res = await fetch('/api/ai/subtasks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          taskTitle: task.title,
+          taskSubtitle: task.description ?? task.subtitle ?? undefined,
+          project: task.project?.name,
+        }),
+      });
+      const json = await res.json() as { subtasks?: Array<{ title: string; priority: Priority }>; error?: string };
+      if (!res.ok || !json.subtasks?.length) throw new Error(json.error ?? 'No subtasks');
+      const created: SubtaskRow[] = [];
+      for (const subtask of json.subtasks) {
+        const sub = await createSubtask(task.id, {
+          title: subtask.title,
+          priority: subtask.priority,
+        });
+        created.push(sub as SubtaskRow);
+      }
+      setTask((t) => t ? { ...t, subtasks: [...t.subtasks, ...created] } : t);
+    } catch {
+      /* The AI endpoint already reports missing keys/rate limits; keep the panel usable. */
+    } finally {
+      setGeneratingSubtasks(false);
+    }
   };
 
   const handleDeleteSubtask = (subId: string) => {
@@ -296,6 +330,15 @@ export function TaskDetailPanel({ taskId, onClose, onTaskUpdated, onTaskDeleted 
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-2)', border: '1px solid var(--border-soft)', borderRadius: 4, padding: '1px 5px' }}>
                   {task.subtasks.filter((s) => s.done).length}/{task.subtasks.length}
                 </span>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginLeft: 'auto', gap: 5, fontSize: 10.5, textTransform: 'none', letterSpacing: 0 }}
+                  onClick={handleGenerateSubtasks}
+                  disabled={generatingSubtasks}
+                >
+                  {generatingSubtasks ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={10} />}
+                  {generatingSubtasks ? 'Planning…' : 'Plan'}
+                </button>
               </div>
 
               {task.subtasks.length > 0 && (

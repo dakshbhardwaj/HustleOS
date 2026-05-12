@@ -7,9 +7,10 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ExternalLink, Loader2, Pencil, X, Save, MessageSquare } from 'lucide-react';
+import { Plus, ExternalLink, Loader2, Pencil, X, Save, MessageSquare, CheckSquare } from 'lucide-react';
 import { ScreenHeader, Pill, EmptyState } from '@/components/ui';
 import { getJobs, updateJobStage, createJob, deleteJob, updateJob } from '@/lib/actions/jobs';
+import { createTaskFromJobNextStep } from '@/lib/actions/tasks';
 import { useAppStore } from '@/lib/store';
 import type { Tone } from '@/types';
 import type { Job as DBJob, JobStage } from '@prisma/client';
@@ -46,7 +47,7 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
-function JobCard({ job, onDelete, onUpdate, onPrep }: { job: DBJob; onDelete: (id: string) => void; onUpdate: (id: string, patch: Partial<DBJob>) => void; onPrep: () => void }) {
+function JobCard({ job, highlighted, onDelete, onUpdate, onPrep, onTask }: { job: DBJob; highlighted: boolean; onDelete: (id: string) => void; onUpdate: (id: string, patch: Partial<DBJob>) => void; onPrep: () => void; onTask: (job: DBJob) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: job.id });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ nextStep: job.nextStep ?? '', notes: job.notes ?? '', salary: job.salary ?? '', location: job.location ?? '' });
@@ -65,7 +66,13 @@ function JobCard({ job, onDelete, onUpdate, onPrep }: { job: DBJob; onDelete: (i
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+        outline: highlighted ? '2px solid var(--accent)' : undefined,
+        boxShadow: highlighted ? '0 0 0 4px color-mix(in oklch, var(--accent) 18%, transparent)' : undefined,
+      }}
       className="job-card"
       {...attributes} {...listeners}
     >
@@ -130,6 +137,14 @@ function JobCard({ job, onDelete, onUpdate, onPrep }: { job: DBJob; onDelete: (i
           <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '1px 5px' }} onClick={openEdit} title="Edit">
             <Pencil size={11} />
           </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ fontSize: 10, padding: '1px 6px', gap: 3 }}
+            onClick={(e) => { e.stopPropagation(); onTask(job); }}
+            title="Create next-action task"
+          >
+            <CheckSquare size={10} /> Task
+          </button>
           {(job.stage === 'Interview' || job.stage === 'OA') && (
             <button
               className="btn btn-ghost btn-sm"
@@ -154,11 +169,15 @@ const EMPTY_FORM: AddJobForm = { company: '', role: '', salary: '', location: ''
 
 export function JobsScreen() {
   const setActive = useAppStore((s) => s.setActive);
+  const showToast = useAppStore((s) => s.showToast);
+  const selectedEntity = useAppStore((s) => s.selectedEntity);
+  const setSelectedEntity = useAppStore((s) => s.setSelectedEntity);
   const [jobs, setJobs] = useState<DBJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [dragging, setDragging] = useState<DBJob | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState<AddJobForm>(EMPTY_FORM);
+  const [highlightedJobId, setHighlightedJobId] = useState<string | null>(null);
   const [saving, startSave] = useTransition();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -166,6 +185,19 @@ export function JobsScreen() {
   useEffect(() => {
     getJobs().then(setJobs).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (selectedEntity?.type !== 'job') return;
+    const timer = setTimeout(() => {
+      setHighlightedJobId(selectedEntity.id);
+      setSelectedEntity(null);
+    }, 0);
+    const clearTimer = setTimeout(() => setHighlightedJobId(null), 3500);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(clearTimer);
+    };
+  }, [selectedEntity, setSelectedEntity]);
 
   const onDragStart = ({ active }: DragStartEvent) => {
     setDragging(jobs.find((j) => j.id === active.id) ?? null);
@@ -206,6 +238,17 @@ export function JobsScreen() {
 
   const handleUpdate = (id: string, patch: Partial<DBJob>) => {
     setJobs((prev) => prev.map((j) => j.id === id ? { ...j, ...patch } : j));
+  };
+
+  const handleCreateTask = (job: DBJob) => {
+    startSave(async () => {
+      try {
+        const task = await createTaskFromJobNextStep(job.id);
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create job task', 'info');
+      }
+    });
   };
 
   if (loading) {
@@ -293,7 +336,7 @@ export function JobsScreen() {
                           Drop here
                         </div>
                       ) : (
-                        stageJobs.map((job) => <JobCard key={job.id} job={job} onDelete={handleDelete} onUpdate={handleUpdate} onPrep={() => setActive('interview')} />)
+                        stageJobs.map((job) => <JobCard key={job.id} job={job} highlighted={highlightedJobId === job.id} onDelete={handleDelete} onUpdate={handleUpdate} onPrep={() => setActive('interview')} onTask={handleCreateTask} />)
                       )}
                     </div>
                   </SortableContext>

@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useTransition } from 'react';
 import { Plus, Search, Link2, Loader2, Trash2, Save, X, ExternalLink, ArrowRight } from 'lucide-react';
 import { getNotes, createNote, updateNote, deleteNote } from '@/lib/actions/notes';
+import { useAppStore } from '@/lib/store';
 import type { Note } from '@prisma/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -30,6 +31,8 @@ function extractWikiRefs(content: string): string[] {
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function VaultScreen() {
+  const selectedEntity = useAppStore((s) => s.selectedEntity);
+  const setSelectedEntity = useAppStore((s) => s.setSelectedEntity);
   const [notes, setNotes]     = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -49,6 +52,17 @@ export function VaultScreen() {
       if (data.length > 0) setActiveId(data[0].id);
     }).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (selectedEntity?.type !== 'note') return;
+    if (!notes.some((note) => note.id === selectedEntity.id)) return;
+    const timer = setTimeout(() => {
+      setActiveId(selectedEntity.id);
+      setEditing(false);
+      setSelectedEntity(null);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [notes, selectedEntity, setSelectedEntity]);
 
   const allTags = useMemo(() =>
     Array.from(new Set(notes.flatMap((n) => n.tags))).sort(),

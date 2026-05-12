@@ -66,6 +66,12 @@ export interface Badges {
   opportunities: number; // New opportunities
 }
 
+export type SelectedEntity =
+  | { type: 'task'; id: string }
+  | { type: 'job'; id: string }
+  | { type: 'opportunity'; id: string }
+  | { type: 'note'; id: string };
+
 interface AppState {
   active: ScreenKey;
   cmdOpen: boolean;
@@ -91,6 +97,8 @@ interface AppState {
   toast: { message: string; type: 'success' | 'info' } | null;
   /** Persisted focus session log — focus minutes per day (keyed YYYY-MM-DD) */
   focusMinutesByDay: Record<string, number>;
+  /** One-shot intent used by global search to open a specific workspace item. */
+  selectedEntity: SelectedEntity | null;
 
   setActive: (screen: ScreenKey) => void;
   setCmdOpen: (open: boolean) => void;
@@ -99,6 +107,7 @@ interface AppState {
   setQuickTaskOpen: (open: boolean) => void;
   showToast: (message: string, type?: 'success' | 'info') => void;
   addFocusMinutes: (date: string, minutes: number) => void;
+  setSelectedEntity: (entity: SelectedEntity | null) => void;
   setTweaksOpen: (open: boolean) => void;
   setNotifOpen: (open: boolean) => void;
   addNotification: (n: Omit<Notification, 'id' | 'read' | 'createdAt'>) => void;
@@ -125,6 +134,7 @@ export const useAppStore = create<AppState>()(
       quickTaskOpen: false,
       toast: null,
       focusMinutesByDay: {},
+      selectedEntity: null,
       tweaksOpen: false,
       notifOpen: false,
       notifications: [],
@@ -154,6 +164,7 @@ export const useAppStore = create<AppState>()(
             [date]: (s.focusMinutesByDay[date] ?? 0) + minutes,
           },
         })),
+      setSelectedEntity: (entity) => set({ selectedEntity: entity }),
       setTweaksOpen: (open) => set({ tweaksOpen: open }),
       setNotifOpen: (open) => set({ notifOpen: open }),
       addNotification: (n) =>
@@ -189,7 +200,7 @@ export const useAppStore = create<AppState>()(
         dailyBriefCache: s.dailyBriefCache,
         lastGreetedDate: s.lastGreetedDate,
         focusMinutesByDay: s.focusMinutesByDay,
-        // badges, quickTaskOpen, toast intentionally NOT persisted
+        // badges, quickTaskOpen, selectedEntity, toast intentionally NOT persisted
       }),
     }
   )

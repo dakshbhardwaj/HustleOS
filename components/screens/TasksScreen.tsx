@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useTransition, useOptimistic, useEffect, useRef } from 'react';
-import { Plus, Loader2, ChevronDown, ChevronRight, X, FolderPlus, Trash2, ChevronUp } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, X, FolderPlus, Trash2, ChevronUp } from 'lucide-react';
 import { ScreenHeader, Pill } from '@/components/ui';
 import { toggleTask, createTask, getProjects, createProject, updateTask, deleteTask } from '@/lib/actions/tasks';
 import { TaskDetailPanel } from '@/components/screens/TaskDetailPanel';
+import { formatTaskDueLabel, parseTaskCapture } from '@/lib/task-capture';
+import { useAppStore } from '@/lib/store';
 import type { Task, Project } from '@prisma/client';
 
 type Priority = 'P0' | 'P1' | 'P2';
@@ -49,6 +51,13 @@ function formatDue(d: Date | null): string {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function SortIcon({ active, asc }: { active: boolean; asc: boolean }) {
+  if (!active) return null;
+  return asc
+    ? <ChevronUp size={10} style={{ display: 'inline', marginLeft: 2 }} />
+    : <ChevronDown size={10} style={{ display: 'inline', marginLeft: 2 }} />;
+}
+
 interface TaskRowProps {
   task: TaskWithProject;
   onToggle: (id: string) => void;
@@ -60,7 +69,6 @@ interface TaskRowProps {
 }
 
 function TaskRow({ task, onToggle, onDelete, onStatusCycle, onPriorityCycle, onTitleSave, onOpenDetail }: TaskRowProps) {
-  const [, startTransition] = useTransition();
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(task.title);
   const [hovered, setHovered] = useState(false);
@@ -203,6 +211,9 @@ interface TasksScreenProps {
 }
 
 export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggested }: TasksScreenProps) {
+  const showToast = useAppStore((s) => s.showToast);
+  const selectedEntity = useAppStore((s) => s.selectedEntity);
+  const setSelectedEntity = useAppStore((s) => s.setSelectedEntity);
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [sortKey, setSortKey] = useState<SortKey>('priority');
   const [sortAsc, setSortAsc] = useState(true);
@@ -214,6 +225,16 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
   const [newProjectName, setNewProjectName] = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedEntity?.type !== 'task') return;
+    const timer = setTimeout(() => {
+      setActiveTab('all');
+      setDetailTaskId(selectedEntity.id);
+      setSelectedEntity(null);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [selectedEntity, setSelectedEntity]);
 
   useEffect(() => {
     getProjects().then(setProjects).catch(() => {});
@@ -229,13 +250,9 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [pendingTasks, setPendingTasks] = useState<TaskWithProject[]>([]);
 
-  useEffect(() => {
-    setPendingTasks((prev) =>
-      prev.filter((p) => !tasks.some((t) => t.title === p.title))
-    );
-  }, [tasks]);
-
-  const allTasks = [...optimisticTasks, ...pendingTasks];
+  const settledTaskTitles = new Set(tasks.map((t) => t.title));
+  const unsettledPendingTasks = pendingTasks.filter((p) => !settledTaskTitles.has(p.title));
+  const allTasks = [...optimisticTasks, ...unsettledPendingTasks];
   const visibleTasks = allTasks.filter((t) => !deletedIds.has(t.id));
 
   const tabMap: Record<TabKey, TaskWithProject[]> = {
@@ -303,7 +320,10 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
     if (!newForm.title.trim()) return;
 
     const { priority, dueAt, projectId } = newForm;
-    const title = newForm.title.trim();
+    const parsed = parseTaskCapture(newForm.title);
+    const title = parsed.title || newForm.title.trim();
+    const resolvedPriority = parsed.priority ?? priority;
+    const resolvedDueAt = dueAt ? new Date(dueAt) : parsed.dueAt;
     const project = projects.find((p) => p.id === projectId) ?? null;
     const optId = `pending-${Date.now()}`;
 
@@ -312,10 +332,10 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
       title,
       subtitle: null,
       description: null,
-      priority: priority as TaskWithProject['priority'],
+      priority: resolvedPriority as TaskWithProject['priority'],
       status: 'Todo' as TaskWithProject['status'],
       done: false,
-      dueAt: dueAt ? new Date(dueAt) : null,
+      dueAt: resolvedDueAt ?? null,
       projectId: projectId || null,
       project,
       userId: '',
@@ -332,9 +352,11 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
 
     startSave(async () => {
       try {
-        await createTask({ title, priority, dueAt: dueAt ? new Date(dueAt) : undefined, projectId: projectId || undefined });
+        const task = await createTask({ title, priority: resolvedPriority, dueAt: resolvedDueAt, projectId: projectId || undefined });
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
       } catch {
         setPendingTasks((prev) => prev.filter((t) => t.id !== optId));
+        showToast('Could not create task', 'info');
       }
     });
   };
@@ -356,11 +378,6 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
     setShowSortMenu(false);
   };
 
-  const SortIcon = ({ k }: { k: SortKey }) =>
-    sortKey !== k ? null : sortAsc
-      ? <ChevronUp size={10} style={{ display: 'inline', marginLeft: 2 }} />
-      : <ChevronDown size={10} style={{ display: 'inline', marginLeft: 2 }} />;
-
   const TABS: { key: TabKey; label: string; count: number; ai?: boolean }[] = [
     { key: 'all',        label: 'All',          count: visibleTasks.length },
     { key: 'today',      label: 'Today',        count: tabMap.today.length },
@@ -371,6 +388,7 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
 
   const openCount = visibleTasks.filter((t) => !t.done).length;
   const doneCount = visibleTasks.filter((t) => t.done).length;
+  const parsedNewTask = parseTaskCapture(newForm.title);
 
   return (
     <div className="screen">
@@ -400,7 +418,7 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '7px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, color: sortKey === k ? 'var(--accent)' : 'var(--text-dim)', textAlign: 'left' }}
                     >
                       {k.charAt(0).toUpperCase() + k.slice(1)}
-                      <SortIcon k={k} />
+                      <SortIcon active={sortKey === k} asc={sortAsc} />
                     </button>
                   ))}
                 </div>
@@ -432,6 +450,12 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
                 placeholder="What needs to get done?"
                 style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '8px 10px', fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
               />
+              {(parsedNewTask.priority || parsedNewTask.dueAt) && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+                  {parsedNewTask.priority && <span>{parsedNewTask.priority}</span>}
+                  {parsedNewTask.dueAt && <span>due {formatTaskDueLabel(parsedNewTask.dueAt)}</span>}
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: 12 }}>
@@ -513,14 +537,14 @@ export function TasksScreen({ tasks, todayTasks, inProgress, blocked, aiSuggeste
               <th style={{ width: 40, paddingLeft: 16 }} />
               <th>Task</th>
               <th style={{ width: 120, cursor: 'pointer' }} onClick={() => cycleSortKey('status')}>
-                Status <SortIcon k="status" />
+                Status <SortIcon active={sortKey === 'status'} asc={sortAsc} />
               </th>
               <th style={{ width: 80, cursor: 'pointer' }} onClick={() => cycleSortKey('priority')}>
-                Priority <SortIcon k="priority" />
+                Priority <SortIcon active={sortKey === 'priority'} asc={sortAsc} />
               </th>
               <th style={{ width: 150 }}>Project</th>
               <th style={{ width: 90, cursor: 'pointer' }} onClick={() => cycleSortKey('due')}>
-                Due <SortIcon k="due" />
+                Due <SortIcon active={sortKey === 'due'} asc={sortAsc} />
               </th>
               <th style={{ width: 130, paddingRight: 16 }} />
             </tr>
