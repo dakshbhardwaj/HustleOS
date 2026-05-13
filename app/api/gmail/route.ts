@@ -77,9 +77,9 @@ export async function GET() {
     return Response.json({ error: 'not_connected', message: 'Gmail not connected. Sign in with Google to enable email intelligence.' }, { status: 200 });
   }
 
-  // Fetch messages from the last 2 weeks
+  // Fetch messages from the last 4 weeks so older actionable emails still inform tasks.
   const listRes = await fetch(
-    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=50&labelIds=INBOX&q=newer_than%3A14d',
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&labelIds=INBOX&q=newer_than%3A28d',
     { headers: { Authorization: `Bearer ${googleToken}` } }
   );
 
@@ -93,8 +93,8 @@ export async function GET() {
     return Response.json({ emails: [], connected: true });
   }
 
-  // Fetch full message details (first 20)
-  const messageIds = listData.messages.slice(0, 20).map((m) => m.id);
+  // Fetch full message details. Keep classification bounded for latency/cost.
+  const messageIds = listData.messages.slice(0, 50).map((m) => m.id);
   const messages = await Promise.all(
     messageIds.map((id) =>
       fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, {

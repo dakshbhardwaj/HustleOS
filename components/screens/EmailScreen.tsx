@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
-import { Mail, RefreshCw, Sparkles, Loader2, ExternalLink, CheckSquare, X, ChevronDown, ChevronUp, Calendar, ArrowRight, MessageSquare } from 'lucide-react';
+import { Mail, RefreshCw, Sparkles, Loader2, CheckSquare, X, ChevronDown, ChevronUp, Calendar, ArrowRight, MessageSquare } from 'lucide-react';
 import { ScreenHeader, Pill } from '@/components/ui';
 import { useAppStore, EMAIL_CACHE_TTL_MS } from '@/lib/store';
 import type { Tone } from '@/types';
@@ -34,22 +34,6 @@ interface AiTask {
   actionItems: string[];
 }
 
-function daysAgo(n: number): string {
-  return new Date(Date.now() - n * 86_400_000).toISOString();
-}
-
-const DEMO_EMAILS: Email[] = [
-  { id: 'e1', from: 'Sara at Stripe', subject: 'Onsite confirmation — Tuesday', snippet: "Looking forward to seeing you. Here's the schedule and your panel…", date: daysAgo(1), cat: 'Interview', tone: 'accent', action: 'Block 4:30–6:30pm Tue · prep packet ready', priority: 'high', summary: 'Stripe onsite confirmed for Tuesday 4:30pm — panel interview with 4 engineers. Bring laptop. Dress code: casual.' },
-  { id: 'e2', from: 'jobs@linear.app', subject: 'Take-home assignment', snippet: 'Please complete by EOD Wednesday. Estimated time: 4 hours…', date: daysAgo(5), cat: 'Action Required', tone: 'warn', action: 'Created task: "Linear take-home" due Wed', priority: 'high', summary: 'Linear take-home due Wednesday EOD — design a data model for a collaborative task system. 4h estimate.' },
-  { id: 'e3', from: 'Railway Bounties', subject: 'New bounty: OAuth proxy template', snippet: '$500 for a generic OAuth proxy template. 2 submissions so far.', date: daysAgo(2), cat: 'Opportunity', tone: 'success', action: 'Saved to Opportunity radar (score 94)', priority: 'normal', summary: '$500 Railway bounty — build a generic OAuth proxy template. 2 competitors so far, deadline in 5 days.' },
-  { id: 'e4', from: 'Vercel HR', subject: 'We went with another candidate', snippet: 'We appreciate the time you took to interview with us…', date: daysAgo(8), cat: 'Rejection', tone: 'danger', action: 'Marked Vercel as Rejected · removed from pipeline', priority: 'normal', summary: 'Vercel rejection after final round. No specific feedback given.' },
-  { id: 'e5', from: 'Maya Lin', subject: 'Coffee chat next week?', snippet: 'Loved your post on websockets. Free Thursday or Friday?', date: daysAgo(10), cat: 'Networking', tone: 'neutral', priority: 'low', summary: 'Maya (eng @ Cloudflare) wants to connect over websockets post. Could be a good networking contact.' },
-  { id: 'e6', from: 'GitHub Notifications', subject: 'Issue #4821 has activity', snippet: 'A maintainer commented on the issue you bookmarked.', date: daysAgo(3), cat: 'Opportunity', tone: 'success', action: 'Bumped to top of opportunity radar', priority: 'normal', summary: 'Vite maintainer replied to issue #4821 you bookmarked. Good chance to contribute.' },
-  { id: 'e7', from: 'Notion Careers', subject: 'Quick intro?', snippet: 'Hi — saw your portfolio. Would love a 15-min chat…', date: daysAgo(12), cat: 'Networking', tone: 'neutral', action: 'Suggested response drafted', priority: 'low', summary: 'Notion recruiter outreach — early stage. Role not specified yet.' },
-  { id: 'e8', from: 'AWS Billing', subject: 'Your monthly invoice — $12.40', snippet: '$12.40 for usage in October.', date: daysAgo(6), cat: 'Informational', tone: 'neutral', priority: 'low', summary: 'AWS bill $12.40 for October. No action needed.' },
-  { id: 'e9', from: 'David at Acme', subject: 'Offer letter attached', snippet: 'Attached the offer letter. Happy to discuss any questions…', date: daysAgo(4), cat: 'Offer', tone: 'success', action: 'Negotiation prompts drafted · decide by Mon', priority: 'high', summary: 'Acme offer letter attached. Base $180k + equity. Respond by Monday. Negotiation window open.' },
-];
-
 function timeAgo(dateStr: string): string {
   try {
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -80,7 +64,7 @@ function initFromCache(): { emails: Email[]; connected: boolean; needsFetch: boo
   if (cache && Date.now() - cache.cachedAt < EMAIL_CACHE_TTL_MS) {
     return { emails: cache.emails as Email[], connected: cache.connected, needsFetch: false };
   }
-  return { emails: DEMO_EMAILS, connected: false, needsFetch: true };
+  return { emails: [], connected: false, needsFetch: true };
 }
 
 interface EmailRowProps {
@@ -325,8 +309,7 @@ export function EmailScreen() {
   const followUpEmails = emails.filter((e) => {
     if (!FOLLOWUP_CATS.includes(e.cat)) return false;
     if (e.taskCreated) return false;
-    // For demo emails with no real date, treat priority:high as awaiting follow-up
-    if (!e.date) return e.priority === 'high' || e.priority === 'normal';
+    if (!e.date) return false;
     return Date.now() - new Date(e.date).getTime() > FOLLOWUP_THRESHOLD_MS;
   });
 
@@ -345,7 +328,7 @@ export function EmailScreen() {
         subtitle={
           connected
             ? `${emails.length} synced · ${emails.filter((e) => e.cat === 'Action Required').length} action required · ${emails.filter((e) => e.cat === 'Interview').length} interview`
-            : `${emails.length} demo emails · connect Gmail for real data`
+            : 'Connect Gmail to scan the last 4 weeks for tasks and opportunities'
         }
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
@@ -409,7 +392,6 @@ export function EmailScreen() {
               {emails.filter((e) => e.cat === 'Action Required').length > 0 && `${emails.filter((e) => e.cat === 'Action Required').length} action required`}
             </span>
           </div>
-          {!connected && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)', background: 'var(--surface)', padding: '2px 7px', borderRadius: 4 }}>Demo data</span>}
         </div>
       )}
 
@@ -442,7 +424,7 @@ export function EmailScreen() {
         <section className="panel panel-flush">
           {list.length === 0 ? (
             <div style={{ padding: '28px 16px', textAlign: 'center', color: 'var(--text-faint)', fontSize: 12.5 }}>
-              No emails in this category
+              {connected ? 'No emails in this category from the last 4 weeks' : 'Connect Gmail to scan the last 4 weeks'}
             </div>
           ) : (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>

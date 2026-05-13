@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useTransition } from 'react';
-import { RefreshCw, Sparkles, CheckSquare, Briefcase, Zap, Loader2, Rss, MessageSquare } from 'lucide-react';
+import { RefreshCw, Sparkles, CheckSquare, Briefcase, Zap, Loader2, Rss, MessageSquare, BookOpen, Plus } from 'lucide-react';
 import { ScreenHeader, Pill } from '@/components/ui';
-import { createTaskFromJobNextStep, createTaskFromOpportunity, getTasksWithStats } from '@/lib/actions/tasks';
+import { createTechStoryNote, getWeeklyLearningDigest } from '@/lib/actions/notes';
+import { createTaskFromJobNextStep, createTaskFromOpportunity, createTaskFromTechStory, getTasksWithStats } from '@/lib/actions/tasks';
 import { getJobs } from '@/lib/actions/jobs';
 import { getOpportunities } from '@/lib/actions/opportunities';
 import { useAppStore } from '@/lib/store';
@@ -41,6 +42,8 @@ interface TechStory {
   comments: number;
   by: string;
   relevance: number;
+  tags?: string[];
+  angle?: string;
   hnUrl: string;
 }
 
@@ -52,6 +55,12 @@ interface BriefData {
   opportunities: Opportunity[];
 }
 
+interface WeeklyLearningDigest {
+  notes: Array<{ id: string; title: string; tags: string[]; updatedAt: Date }>;
+  topTags: Array<{ tag: string; count: number }>;
+  focus: string;
+}
+
 export function DailyBriefScreen() {
   const dailyBriefCache    = useAppStore((s) => s.dailyBriefCache);
   const setDailyBriefCache = useAppStore((s) => s.setDailyBriefCache);
@@ -61,6 +70,8 @@ export function DailyBriefScreen() {
   const [loading, setLoading] = useState(true);
   const [techStories, setTechStories] = useState<TechStory[]>([]);
   const [techLoading, setTechLoading] = useState(true);
+  const [weeklyLearning, setWeeklyLearning] = useState<WeeklyLearningDigest | null>(null);
+  const [capturingStoryId, setCapturingStoryId] = useState<number | null>(null);
   const [aiSummary, setAiSummary] = useState(() => {
     if (dailyBriefCache?.date === todayDateString()) return dailyBriefCache.text;
     return '';
@@ -93,9 +104,13 @@ export function DailyBriefScreen() {
   const loadTechFeed = async () => {
     setTechLoading(true);
     try {
-      const res = await fetch('/api/tech-feed');
+      const [res, digest] = await Promise.all([
+        fetch('/api/tech-feed'),
+        getWeeklyLearningDigest().catch(() => null),
+      ]);
       const json = await res.json() as { stories?: TechStory[] };
       setTechStories(json.stories ?? []);
+      setWeeklyLearning(digest);
     } catch { /* silent */ } finally {
       setTechLoading(false);
     }
@@ -161,6 +176,44 @@ export function DailyBriefScreen() {
         showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
       } catch {
         showToast('Could not create opportunity task', 'info');
+      }
+    });
+  };
+
+  const saveTechStory = (story: TechStory) => {
+    setCapturingStoryId(story.id);
+    startTransition(async () => {
+      try {
+        await createTechStoryNote({
+          title: story.title,
+          url: story.url,
+          hnUrl: story.hnUrl,
+          angle: story.angle,
+          tags: story.tags,
+        });
+        showToast('Saved to Vault');
+      } catch {
+        showToast('Could not save story', 'info');
+      } finally {
+        setCapturingStoryId(null);
+      }
+    });
+  };
+
+  const taskTechStory = (story: TechStory) => {
+    setCapturingStoryId(story.id);
+    startTransition(async () => {
+      try {
+        const task = await createTaskFromTechStory({
+          title: story.title,
+          url: story.url,
+          angle: story.angle,
+        });
+        showToast(`Task added: ${task.title.slice(0, 42)}${task.title.length > 42 ? '…' : ''}`);
+      } catch {
+        showToast('Could not create reading task', 'info');
+      } finally {
+        setCapturingStoryId(null);
       }
     });
   };
@@ -361,7 +414,7 @@ export function DailyBriefScreen() {
             <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Rss size={13} style={{ color: 'var(--accent)' }} />
               <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Tech pulse</span>
-              <span style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>Hacker News · filtered for engineering</span>
+              <span style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>Hacker News · technical radar</span>
               <button
                 className="btn btn-ghost btn-sm"
                 style={{ marginLeft: 'auto', gap: 4, fontSize: 11 }}
@@ -381,8 +434,25 @@ export function DailyBriefScreen() {
                 Could not load tech feed. Check your connection.
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
-                {techStories.map((story, i) => (
+              <div>
+                {weeklyLearning && (
+                  <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-soft)', background: 'color-mix(in oklch, var(--accent) 4%, transparent)', display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 12, alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 700, marginBottom: 4 }}>Weekly learning loop</div>
+                      <div style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.45 }}>{weeklyLearning.focus}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <span style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', alignSelf: 'center' }}>{weeklyLearning.notes.length} notes this week</span>
+                      {weeklyLearning.topTags.slice(0, 5).map(({ tag, count }) => (
+                        <span key={tag} style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', background: 'color-mix(in oklch, var(--accent) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--accent) 18%, transparent)', borderRadius: 4, padding: '2px 6px' }}>
+                          {tag} {count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+                  {techStories.map((story, i) => (
                   <div
                     key={story.id}
                     style={{
@@ -421,9 +491,40 @@ export function DailyBriefScreen() {
                           <span style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>✦ relevant</span>
                         )}
                       </div>
+                      {(story.angle || story.tags?.length) && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+                          {story.angle && <span style={{ fontSize: 10.5, color: 'var(--text-faint)', lineHeight: 1.35 }}>{story.angle}</span>}
+                          {story.tags?.map((tag) => (
+                            <span key={tag} style={{ fontSize: 9.5, color: 'var(--accent)', fontFamily: 'var(--font-mono)', background: 'color-mix(in oklch, var(--accent) 8%, transparent)', border: '1px solid color-mix(in oklch, var(--accent) 18%, transparent)', borderRadius: 4, padding: '1px 5px' }}>
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ gap: 4, fontSize: 10.5 }}
+                          onClick={() => saveTechStory(story)}
+                          disabled={capturingStoryId === story.id}
+                        >
+                          {capturingStoryId === story.id ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <BookOpen size={10} />}
+                          Save note
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ gap: 4, fontSize: 10.5 }}
+                          onClick={() => taskTechStory(story)}
+                          disabled={capturingStoryId === story.id}
+                        >
+                          <Plus size={10} />
+                          Read later
+                        </button>
+                      </div>
                     </div>
                   </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>

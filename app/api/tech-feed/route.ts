@@ -31,6 +31,22 @@ function relevanceScore(title: string): number {
   return RELEVANT_KEYWORDS.filter((kw) => lower.includes(kw)).length;
 }
 
+function matchedKeywords(title: string): string[] {
+  const lower = title.toLowerCase();
+  return RELEVANT_KEYWORDS.filter((kw) => lower.includes(kw)).slice(0, 5);
+}
+
+function learningAngle(title: string): string {
+  const lower = title.toLowerCase();
+  if (lower.includes('database') || lower.includes('postgres')) return 'Read for data modeling and persistence tradeoffs.';
+  if (lower.includes('performance')) return 'Read for profiling and optimization instincts.';
+  if (lower.includes('architecture') || lower.includes('system design')) return 'Read for system design vocabulary.';
+  if (lower.includes('ai') || lower.includes('llm') || lower.includes('agent')) return 'Read for AI engineering patterns.';
+  if (lower.includes('react') || lower.includes('frontend') || lower.includes('typescript')) return 'Read for frontend engineering taste.';
+  if (lower.includes('hiring') || lower.includes('job')) return 'Read for market and career signal.';
+  return 'Read if it sharpens your engineering judgment.';
+}
+
 export async function GET() {
   try {
     // Fetch top 60 story IDs from HN
@@ -58,6 +74,8 @@ export async function GET() {
         comments: item.descendants ?? 0,
         by: item.by,
         relevance: relevanceScore(item.title),
+        tags: matchedKeywords(item.title),
+        angle: learningAngle(item.title),
         hnUrl: `https://news.ycombinator.com/item?id=${item.id}`,
       }))
       // Sort: relevant stories first, then by HN score

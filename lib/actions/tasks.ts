@@ -130,6 +130,20 @@ export async function createTaskFromOpportunity(opportunityId: string) {
   });
 }
 
+export async function createTaskFromTechStory(story: {
+  title: string;
+  url: string;
+  angle?: string;
+}) {
+  return createTask({
+    title: `Read: ${story.title}`.slice(0, 160),
+    subtitle: 'Tech Pulse',
+    description: [story.angle, story.url].filter(Boolean).join('\n\n'),
+    priority: 'P2',
+    aiSuggested: true,
+  });
+}
+
 export async function createSubtask(parentId: string, data: {
   title: string;
   priority?: Priority;
